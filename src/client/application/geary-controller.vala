@@ -6,16 +6,6 @@
  * (version 2.1 or later). See the COPYING file in this distribution.
  */
 
-// Required because Gcr's VAPI is behind-the-times
-// TODO: When bindings available, use async variants of these calls
-extern const string GCR_PURPOSE_SERVER_AUTH;
-extern bool gcr_trust_add_pinned_certificate(Gcr.Certificate cert, string purpose, string peer,
-    Cancellable? cancellable) throws Error;
-extern bool gcr_trust_is_certificate_pinned(Gcr.Certificate cert, string purpose, string peer,
-    Cancellable? cancellable) throws Error;
-extern bool gcr_trust_remove_pinned_certificate(Gcr.Certificate cert, string purpose, string peer,
-    Cancellable? cancellable) throws Error;
-
 /**
  * Primary controller for a Geary application instance.
  */
@@ -96,6 +86,8 @@ public class GearyController : Geary.BaseObject {
 
     public Soup.Session? avatar_session { get; private set; default = null; }
     private Soup.Cache? avatar_cache = null;
+
+    private GcrService certificate_store = new GcrService();
 
     private Geary.Account? current_account = null;
     private Gee.HashMap<Geary.Account, Geary.App.EmailStore> email_stores
@@ -659,61 +651,20 @@ public class GearyController : Geary.BaseObject {
                 err.message);
         }
     }
-    
-    private static void get_gcr_params(Geary.Endpoint endpoint, out Gcr.Certificate cert,
-        out string peer) {
-        cert = new Gcr.SimpleCertificate(endpoint.untrusted_certificate.certificate.data);
-        peer = "%s:%u".printf(endpoint.remote_address.hostname, endpoint.remote_address.port);
-    }
-    
+
     private async void locked_prompt_untrusted_host_async(Geary.AccountInformation account_information,
         Geary.Endpoint endpoint, Geary.Endpoint.SecurityType security, TlsConnection cx,
         Geary.Service service) {
         // possible while waiting on mutex that this endpoint became trusted or untrusted
         if (endpoint.trust_untrusted_host != Geary.Trillian.UNKNOWN)
             return;
-        
-        // get GCR parameters
-        Gcr.Certificate cert;
-        string peer;
-        get_gcr_params(endpoint, out cert, out peer);
-        
-        // Geary allows for user to auto-revoke all questionable server certificates without
-        // digging around in a keyring/pk manager
-        if (Args.revoke_certs) {
-            debug("Auto-revoking certificate for %s...", peer);
-            
-            try {
-                gcr_trust_remove_pinned_certificate(cert, GCR_PURPOSE_SERVER_AUTH, peer, null);
-            } catch (Error err) {
-                message("Unable to auto-revoke server certificate for %s: %s", peer, err.message);
-                
-                // drop through, not absolutely valid to do this (might also mean certificate
-                // was never pinned)
-            }
-        }
-        
-        // if pinned, the user has already made an exception for this server and its certificate,
-        // so go ahead w/o asking
-        try {
-            if (gcr_trust_is_certificate_pinned(cert, GCR_PURPOSE_SERVER_AUTH, peer, null)) {
-                debug("Certificate for %s is pinned, accepting connection...", peer);
-                
-                endpoint.trust_untrusted_host = Geary.Trillian.TRUE;
-                
-                return;
-            }
-        } catch (Error err) {
-            message("Unable to check if server certificate for %s is pinned, assuming not: %s",
-                peer, err.message);
-        }
-        
+
         // if these are in validation, there are complex GTK and workflow issues from simply
         // presenting the prompt now, so caller who connected will need to do it on their own dime
         if (!validating_endpoints.contains(endpoint))
             prompt_for_untrusted_host(main_window, account_information, endpoint, service, false);
     }
-    
+
     private void prompt_for_untrusted_host(Gtk.Window? parent, Geary.AccountInformation account_information,
         Geary.Endpoint endpoint, Geary.Service service, bool is_validation) {
         CertificateWarningDialog dialog = new CertificateWarningDialog(parent, account_information,
@@ -722,27 +673,28 @@ public class GearyController : Geary.BaseObject {
             case CertificateWarningDialog.Result.TRUST:
                 endpoint.trust_untrusted_host = Geary.Trillian.TRUE;
             break;
-            
+
             case CertificateWarningDialog.Result.ALWAYS_TRUST:
                 endpoint.trust_untrusted_host = Geary.Trillian.TRUE;
-                
-                // get GCR parameters for pinning
-                Gcr.Certificate cert;
-                string peer;
-                get_gcr_params(endpoint, out cert, out peer);
-                
-                // pinning the certificate creates an exception for the next time a connection
-                // is attempted
-                debug("Pinning certificate for %s...", peer);
-                try {
-                    gcr_trust_add_pinned_certificate(cert, GCR_PURPOSE_SERVER_AUTH, peer, null);
-                } catch (Error err) {
-                    ErrorDialog error_dialog = new ErrorDialog(main_window,
-                        _("Unable to store server trust exception"), err.message);
-                    error_dialog.run();
-                }
+
+                debug("Pinning certificate for %s...", endpoint.to_string());
+                this.certificate_store.add_pinned.begin(
+                    endpoint,
+                    endpoint.untrusted_certificate,
+                    null,
+                    (obj, res) => {
+                        try {
+                            this.certificate_store.add_pinned.end(res);
+                        } catch (Error err) {
+                            ErrorDialog error_dialog = new ErrorDialog(
+                                this.main_window,
+                                _("Unable to store server trust exception"),
+                                err.message);
+                            error_dialog.run();
+                        }
+                    });
             break;
-            
+
             default:
                 endpoint.trust_untrusted_host = Geary.Trillian.FALSE;
                 

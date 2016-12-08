@@ -312,6 +312,7 @@ ${CMAKE_BINARY_DIR}/geary-version.vala
 
 set(CLIENT_SRC
 client/application/autostart-manager.vala
+client/application/gcr-service.vala
 client/application/geary-application.vala
 client/application/geary-args.vala
 client/application/geary-config.vala
