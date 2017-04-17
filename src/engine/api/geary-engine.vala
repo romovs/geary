@@ -105,10 +105,11 @@ public class Geary.Engine : BaseObject {
      */
     public signal void untrusted_host(Geary.AccountInformation account_information,
         Endpoint endpoint, Endpoint.SecurityType security, TlsConnection cx, Service service);
-    
-    private Engine() {
+
+    // Public so it can be tested
+    public Engine() {
     }
-    
+
     private void check_opened() throws EngineError {
         if (!is_open)
             throw new EngineError.OPEN_REQUIRED("Geary.Engine instance not open");
@@ -192,10 +193,12 @@ public class Geary.Engine : BaseObject {
             FileInfo info = info_list.nth_data(0);
             if (info.get_file_type() == FileType.DIRECTORY) {
                 try {
+                    string id = info.get_name();
                     account_list.add(
                         new AccountInformation.from_file(
-                            user_config_dir.get_child(info.get_name()),
-                            user_data_dir.get_child(info.get_name())
+                            id,
+                            user_config_dir.get_child(id),
+                            user_data_dir.get_child(id)
                         )
                     );
                 } catch (Error err) {
@@ -276,7 +279,7 @@ public class Geary.Engine : BaseObject {
         string? last_account = this.accounts.keys.fold<string?>((next, last) => {
                 string? result = last;
                 if (next.has_prefix(ID_PREFIX)) {
-                    result = (last == null || strcmp(last, next) > 0) ? next : last;
+                    result = (last == null || strcmp(last, next) < 0) ? next : last;
                 }
                 return result;
             },
@@ -291,8 +294,7 @@ public class Geary.Engine : BaseObject {
             throw new EngineError.ALREADY_EXISTS("Account %s already exists", id);
 
         return new AccountInformation(
-            user_config_dir.get_child(id),
-            user_data_dir.get_child(id)
+            id, user_config_dir.get_child(id), user_data_dir.get_child(id)
         );
     }
 
@@ -433,7 +435,7 @@ public class Geary.Engine : BaseObject {
      * Adds the account to be tracked by the engine.  Should only be called from
      * AccountInformation.store_async() and this class.
      */
-    internal void add_account(AccountInformation account, bool created = false) throws Error {
+    public void add_account(AccountInformation account, bool created = false) throws Error {
         check_opened();
 
         bool already_added = accounts.has_key(account.id);

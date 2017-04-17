@@ -25,7 +25,10 @@ public class ConversationEmail : Gtk.Box {
      * Iterator that returns all message views in an email view.
      */
     private class MessageViewIterator :
-        Gee.Traversable<ConversationMessage>, Gee.Iterator<ConversationMessage>, Object {
+        Gee.Traversable<ConversationMessage>,
+        Gee.Iterator<ConversationMessage>,
+        Object {
+
 
         public bool read_only {
             get { return true; }
@@ -113,10 +116,7 @@ public class ConversationEmail : Gtk.Box {
                 mime_content_type
             );
 
-            string file_name = null;
-            if (attachment.has_supplied_filename) {
-                file_name = attachment.file.get_basename();
-            }
+            string? file_name = attachment.content_filename;
             string file_desc = ContentType.get_description(gio_content_type);
             if (ContentType.is_unknown(gio_content_type)) {
                 // Translators: This is the file type displayed for
@@ -125,14 +125,7 @@ public class ConversationEmail : Gtk.Box {
             }
             string file_size = Files.get_filesize_as_string(attachment.filesize);
 
-            // XXX Geary.ImapDb.Attachment will use "none" when
-            // saving attachments with no filename to disk, this
-            // seems to be getting saved to be the filename and
-            // passed back, breaking the has_supplied_filename
-            // test - so check for it here.
-            if (file_name == null ||
-                file_name == "" ||
-                file_name == "none") {
+            if (Geary.String.is_empty(file_name)) {
                 // XXX Check for unknown types here and try to guess
                 // using attachment data.
                 file_name = file_desc;
@@ -267,6 +260,8 @@ public class ConversationEmail : Gtk.Box {
     // Contacts for the email's account
     private Geary.ContactStore contact_store;
 
+    private Configuration config;
+
     // Message view with selected text, if any
     private ConversationMessage? body_selection_message = null;
 
@@ -370,6 +365,7 @@ public class ConversationEmail : Gtk.Box {
                              bool is_draft) {
         this.email = email;
         this.contact_store = contact_store;
+        this.config = config;
 
         if (is_sent) {
             get_style_context().add_class(SENT_CLASS);
@@ -508,17 +504,16 @@ public class ConversationEmail : Gtk.Box {
      * attachment names, types and icons.
      */
     public async void start_loading(Cancellable load_cancelled) {
-        message_view_iterator().foreach((view) => {
-                if (!load_cancelled.is_cancelled()) {
-                    primary_message.load_message_body.begin(load_cancelled);
-                }
-                view.load_avatar.begin(
-                    GearyApplication.instance.controller.avatar_session,
-                    load_cancelled
-                );
-
-                return !load_cancelled.is_cancelled();
-            });
+        foreach (ConversationMessage view in this)  {
+            if (load_cancelled.is_cancelled()) {
+                break;
+            }
+            yield primary_message.load_message_body(load_cancelled);
+            view.load_avatar.begin(
+                GearyApplication.instance.controller.avatar_session,
+                load_cancelled
+            );
+        }
 
         // Only load attachments once the web views have finished
         // loading, since we want to know if any attachments marked as
@@ -606,7 +601,7 @@ public class ConversationEmail : Gtk.Box {
     /**
      * Returns a new Iterable over all message views in this email view
      */
-    internal Gee.Iterator<ConversationMessage> message_view_iterator() {
+    internal Gee.Iterator<ConversationMessage> iterator() {
         return new MessageViewIterator(this);
     }
 
@@ -632,13 +627,12 @@ public class ConversationEmail : Gtk.Box {
             });
         view.web_view.notify["has-valid-height"].connect(() => {
                 bool all_loaded = true;
-                message_view_iterator().foreach((view) => {
-                        if (!view.web_view.has_valid_height) {
-                            all_loaded = false;
-                            return false;
-                        }
-                        return true;
-                    });
+                foreach (ConversationMessage message in this) {
+                    if (!message.web_view.has_valid_height) {
+                        all_loaded = false;
+                        break;
+                    }
+                }
                 if (all_loaded == true && !this.message_bodies_loaded) {
                     // Only update the property value if not already
                     // true
@@ -745,12 +739,36 @@ public class ConversationEmail : Gtk.Box {
     private void print() {
         // XXX This isn't anywhere near good enough - headers aren't
         // being printed.
+
+        Gtk.Window? window = get_toplevel() as Gtk.Window;
         WebKit.PrintOperation op = new WebKit.PrintOperation(
             this.primary_message.web_view
         );
-        Gtk.Window? window = get_toplevel() as Gtk.Window;
-        if (op.run_dialog(window) == WebKit.PrintOperationResponse.PRINT) {
-            op.print();
+        Gtk.PrintSettings settings = new Gtk.PrintSettings();
+
+        if (!Geary.String.is_empty(this.config.print_dir)) {
+            settings.set(Gtk.PRINT_SETTINGS_OUTPUT_DIR, this.config.print_dir);
+        }
+
+        if (this.email.subject != null) {
+            string file_name = Geary.String.reduce_whitespace(this.email.subject.value);
+            file_name = file_name.replace("/", "_");
+            if (file_name.char_count() > 128) {
+                file_name = Geary.String.safe_byte_substring(file_name, 128);
+            }
+
+            if (!Geary.String.is_empty(file_name)) {
+                settings.set(Gtk.PRINT_SETTINGS_OUTPUT_BASENAME, file_name);
+            }
+        }
+
+        op.set_print_settings(settings);
+        op.run_dialog(window);
+
+        string? file_uri = op.get_print_settings().get(Gtk.PRINT_SETTINGS_OUTPUT_URI);
+        if (!Geary.String.is_empty(file_uri)) {
+            File print_file = File.new_for_uri(file_uri);
+            this.config.print_dir = print_file.get_parent().get_path();
         }
     }
 

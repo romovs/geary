@@ -27,9 +27,9 @@ public class GearyController : Geary.BaseObject {
     public const string ACTION_REPLY_TO_MESSAGE = "GearyReplyToMessage";
     public const string ACTION_REPLY_ALL_MESSAGE = "GearyReplyAllMessage";
     public const string ACTION_FORWARD_MESSAGE = "GearyForwardMessage";
-    public const string ACTION_ARCHIVE_MESSAGE = "GearyArchiveMessage";
-    public const string ACTION_TRASH_MESSAGE = "GearyTrashMessage";
-    public const string ACTION_DELETE_MESSAGE = "GearyDeleteMessage";
+    public const string ACTION_ARCHIVE_CONVERSATION = "GearyArchiveConversation";
+    public const string ACTION_TRASH_CONVERSATION = "GearyTrashConversation";
+    public const string ACTION_DELETE_CONVERSATION = "GearyDeleteConversation";
     public const string ACTION_EMPTY_SPAM = "GearyEmptySpam";
     public const string ACTION_EMPTY_TRASH = "GearyEmptyTrash";
     public const string ACTION_UNDO = "GearyUndo";
@@ -54,21 +54,21 @@ public class GearyController : Geary.BaseObject {
     
     public const int MIN_CONVERSATION_COUNT = 50;
     
-    private const string DELETE_MESSAGE_LABEL = _("Delete conversation");
-    private const string DELETE_MESSAGE_TOOLTIP_SINGLE = _("Delete conversation (Shift+Delete)");
-    private const string DELETE_MESSAGE_TOOLTIP_MULTIPLE = _("Delete conversations (Shift+Delete)");
-    private const string DELETE_MESSAGE_ICON_NAME = "edit-delete-symbolic";
+    private const string DELETE_CONVERSATION_LABEL = _("Delete conversation");
+    private const string DELETE_CONVERSATION_TOOLTIP_SINGLE = _("Delete conversation (Shift+Delete)");
+    private const string DELETE_CONVERSATION_TOOLTIP_MULTIPLE = _("Delete conversations (Shift+Delete)");
+    private const string DELETE_CONVERSATION_ICON_NAME = "edit-delete-symbolic";
     
     // This refers to the action ("move email to the trash"), not the Trash folder itself
-    private const string TRASH_MESSAGE_TOOLTIP_SINGLE = _("Move conversation to Trash (Delete, Backspace)");
-    private const string TRASH_MESSAGE_TOOLTIP_MULTIPLE = _("Move conversations to Trash (Delete, Backspace)");
-    private const string TRASH_MESSAGE_ICON_NAME = "user-trash-symbolic";
+    private const string TRASH_CONVERSATION_TOOLTIP_SINGLE = _("Move conversation to Trash (Delete, Backspace)");
+    private const string TRASH_CONVERSATION_TOOLTIP_MULTIPLE = _("Move conversations to Trash (Delete, Backspace)");
+    private const string TRASH_CONVERSATION_ICON_NAME = "user-trash-symbolic";
     
     // This refers to the action ("archive an email"), not the Archive folder itself
-    private const string ARCHIVE_MESSAGE_LABEL = _("_Archive");
-    private const string ARCHIVE_MESSAGE_TOOLTIP_SINGLE = _("Archive conversation (A)");
-    private const string ARCHIVE_MESSAGE_TOOLTIP_MULTIPLE = _("Archive conversations (A)");
-    private const string ARCHIVE_MESSAGE_ICON_NAME = "mail-archive-symbolic";
+    private const string ARCHIVE_CONVERSATION_LABEL = _("_Archive");
+    private const string ARCHIVE_CONVERSATION_TOOLTIP_SINGLE = _("Archive conversation (A)");
+    private const string ARCHIVE_CONVERSATION_TOOLTIP_MULTIPLE = _("Archive conversations (A)");
+    private const string ARCHIVE_CONVERSATION_ICON_NAME = "mail-archive-symbolic";
     
     private const string MARK_AS_SPAM_LABEL = _("Mark as S_pam");
     private const string MARK_AS_NOT_SPAM_LABEL = _("Mark as not S_pam");
@@ -112,7 +112,6 @@ public class GearyController : Geary.BaseObject {
     private Gee.Set<Geary.App.Conversation> selected_conversations = new Gee.HashSet<Geary.App.Conversation>();
     private Geary.App.Conversation? last_deleted_conversation = null;
     private Gee.LinkedList<ComposerWidget> composer_widgets = new Gee.LinkedList<ComposerWidget>();
-    private File? last_save_directory = null;
     private NewMessagesMonitor? new_messages_monitor = null;
     private NewMessagesIndicator? new_messages_indicator = null;
     private UnityLauncher? unity_launcher = null;
@@ -515,25 +514,25 @@ public class GearyController : Geary.BaseObject {
         entries += find_in_conversation;
         add_accelerator("slash", ACTION_FIND_IN_CONVERSATION);
 
-        Gtk.ActionEntry archive_message = { ACTION_ARCHIVE_MESSAGE, ARCHIVE_MESSAGE_ICON_NAME,
-            ARCHIVE_MESSAGE_LABEL, "A", null, on_archive_message };
-        archive_message.tooltip = ARCHIVE_MESSAGE_TOOLTIP_SINGLE;
-        entries += archive_message;
+        Gtk.ActionEntry archive_conversation = { ACTION_ARCHIVE_CONVERSATION, ARCHIVE_CONVERSATION_ICON_NAME,
+            ARCHIVE_CONVERSATION_LABEL, "A", null, on_archive_conversation };
+        archive_conversation.tooltip = ARCHIVE_CONVERSATION_TOOLTIP_SINGLE;
+        entries += archive_conversation;
         
         // although this action changes according to the account's capabilities, set to Delete
         // until they're known so the "translatable" string doesn't first appear
-        Gtk.ActionEntry trash_message = { ACTION_TRASH_MESSAGE, TRASH_MESSAGE_ICON_NAME,
-            null, "Delete", null, on_trash_message };
-        trash_message.tooltip = TRASH_MESSAGE_TOOLTIP_SINGLE;
-        entries += trash_message;
-        add_accelerator("BackSpace", ACTION_TRASH_MESSAGE);
-        
-        Gtk.ActionEntry delete_message = { ACTION_DELETE_MESSAGE, DELETE_MESSAGE_ICON_NAME,
-            null, "<Shift>Delete", null, on_delete_message };
-        delete_message.label = DELETE_MESSAGE_LABEL;
-        delete_message.tooltip = DELETE_MESSAGE_TOOLTIP_SINGLE;
-        entries += delete_message;
-        add_accelerator("<Shift>BackSpace", ACTION_DELETE_MESSAGE);
+        Gtk.ActionEntry trash_conversation = { ACTION_TRASH_CONVERSATION, TRASH_CONVERSATION_ICON_NAME,
+            null, "Delete", null, on_trash_conversation };
+        trash_conversation.tooltip = TRASH_CONVERSATION_TOOLTIP_SINGLE;
+        entries += trash_conversation;
+        add_accelerator("BackSpace", ACTION_TRASH_CONVERSATION);
+
+        Gtk.ActionEntry delete_conversation = { ACTION_DELETE_CONVERSATION, DELETE_CONVERSATION_ICON_NAME,
+            null, "<Shift>Delete", null, on_delete_conversation };
+        delete_conversation.label = DELETE_CONVERSATION_LABEL;
+        delete_conversation.tooltip = DELETE_CONVERSATION_TOOLTIP_SINGLE;
+        entries += delete_conversation;
+        add_accelerator("<Shift>BackSpace", ACTION_DELETE_CONVERSATION);
         
         Gtk.ActionEntry empty_spam = { ACTION_EMPTY_SPAM, null, null, null, null, on_empty_spam };
         empty_spam.label = _("Empty _Spam…");
@@ -595,9 +594,9 @@ public class GearyController : Geary.BaseObject {
             ACTION_REPLY_TO_MESSAGE,
             ACTION_REPLY_ALL_MESSAGE,
             ACTION_FORWARD_MESSAGE,
-            ACTION_ARCHIVE_MESSAGE,
-            ACTION_TRASH_MESSAGE,
-            ACTION_DELETE_MESSAGE,
+            ACTION_ARCHIVE_CONVERSATION,
+            ACTION_TRASH_CONVERSATION,
+            ACTION_DELETE_CONVERSATION,
         };
         Gtk.ActionGroup action_group = this.application.actions;
 
@@ -1296,7 +1295,7 @@ public class GearyController : Geary.BaseObject {
         if (did_attempt_open_all_accounts() &&
             !upgrade_dialog.visible &&
             !cancellable_open_account.is_cancelled() &&
-            !this.application.is_background_service)
+            !Args.hidden_startup)
             main_window.show_all();
     }
     
@@ -1637,8 +1636,8 @@ public class GearyController : Geary.BaseObject {
         return null;
     }
     
-    private void on_folders_available_unavailable(Gee.Collection<Geary.Folder>? available,
-        Gee.Collection<Geary.Folder>? unavailable) {
+    private void on_folders_available_unavailable(Gee.List<Geary.Folder>? available,
+        Gee.List<Geary.Folder>? unavailable) {
         if (available != null && available.size > 0) {
             foreach (Geary.Folder folder in available) {
                 main_window.folder_list.add_folder(folder);
@@ -1672,7 +1671,8 @@ public class GearyController : Geary.BaseObject {
         }
         
         if (unavailable != null) {
-            foreach (Geary.Folder folder in unavailable) {
+            for (int i = (unavailable.size - 1); i >= 0; i--) {
+                Geary.Folder folder = unavailable[i];
                 main_window.folder_list.remove_folder(folder);
                 if (folder.account == current_account) {
                     if (main_window.main_toolbar.copy_folder_menu.has_folder(folder))
@@ -2012,83 +2012,34 @@ public class GearyController : Geary.BaseObject {
         }
 
         foreach (Geary.Attachment attachment in attachments) {
-            string gio_content_type = ContentType.from_mime_type(
-                attachment.content_type.get_mime_type()
+            string uri = attachment.file.get_uri();
+            try {
+                this.application.show_uri(uri);
+            } catch (Error err) {
+                message("Unable to open attachment \"%s\": %s", uri, err.message);
+            }
+        }
+    }
+
+    private async void save_attachment_to_file(Geary.Attachment attachment,
+                                               string? alt_text) {
+        string file_name = yield attachment.get_safe_file_name(alt_text);
+        try {
+            yield this.prompt_save_buffer(
+                file_name, new Geary.Memory.FileBuffer(attachment.file, true)
             );
-            AppInfo? app = null;
-            if (!ContentType.can_be_executable(gio_content_type) &&
-                !ContentType.is_unknown(gio_content_type)) {
-                app = AppInfo.get_default_for_type(gio_content_type, false);
-            }
-            if (app == null) {
-                string content_type = attachment.content_type.get_mime_type();
-                Gtk.AppChooserDialog app_chooser =
-                    new Gtk.AppChooserDialog.for_content_type(
-                        this.main_window,
-                        Gtk.DialogFlags.MODAL | Gtk.DialogFlags.USE_HEADER_BAR,
-                        content_type
-                    );
-                if (app_chooser.run() == Gtk.ResponseType.OK) {
-                    app = app_chooser.get_app_info();
-                }
-                app_chooser.hide();
-            }
-            if (app != null) {
-                List<File> files = new List<File>();
-                files.append(attachment.file);
-                try {
-                    app.launch(files, null);
-                } catch (Error error) {
-                    warning("Failed to launch %s: %s\n",
-                            app.get_name(), error.message);
-                }
-            }
+        } catch (Error err) {
+            message("Unable to save buffer to \"%s\": %s", file_name, err.message);
         }
     }
 
-    private bool do_overwrite_confirmation(File to_overwrite) {
-        string primary = _("A file named “%s” already exists.  Do you want to replace it?").printf(
-            to_overwrite.get_basename());
-        string secondary = _("The file already exists in “%s”.  Replacing it will overwrite its contents.").printf(
-            to_overwrite.get_parent().get_basename());
-        
-        ConfirmationDialog dialog = new ConfirmationDialog(main_window, primary, secondary, _("_Replace"), "destructive-action");
-        
-        return (dialog.run() == Gtk.ResponseType.OK);
-    }
-    
-    private Gtk.FileChooserConfirmation on_confirm_overwrite(Gtk.FileChooser chooser) {
-        // this is only called when choosing one file
-        return do_overwrite_confirmation(chooser.get_file()) ? Gtk.FileChooserConfirmation.ACCEPT_FILENAME
-            : Gtk.FileChooserConfirmation.SELECT_AGAIN;
-    }
-
-    private void on_save_attachments(Gee.Collection<Geary.Attachment> attachments) {
-        Gtk.FileChooserAction action = (attachments.size == 1)
-            ? Gtk.FileChooserAction.SAVE
-            : Gtk.FileChooserAction.SELECT_FOLDER;
+    private async void save_attachments_to_file(Gee.Collection<Geary.Attachment> attachments) {
 #if GTK_3_20
-        Gtk.FileChooserNative dialog = new Gtk.FileChooserNative(null, main_window, action,
-            Stock._SAVE, Stock._CANCEL);
+        Gtk.FileChooserNative dialog = new_save_chooser(Gtk.FileChooserAction.SELECT_FOLDER);
 #else
-        Gtk.FileChooserDialog dialog = new Gtk.FileChooserDialog(null, main_window, action,
-             Stock._CANCEL, Gtk.ResponseType.CANCEL, Stock._SAVE, Gtk.ResponseType.ACCEPT, null);
+        Gtk.FileChooserDialog dialog = new_save_chooser(Gtk.FileChooserAction.SELECT_FOLDER);
 #endif
-        if (last_save_directory != null)
-            dialog.set_current_folder(last_save_directory.get_path());
-        if (attachments.size == 1) {
-            Gee.Iterator<Geary.Attachment> it = attachments.iterator();
-            it.next();
-            Geary.Attachment attachment = it.get();
-            dialog.set_current_name(attachment.file.get_basename());
-            dialog.set_do_overwrite_confirmation(true);
-            // use custom overwrite confirmation so it looks consistent whether one or many
-            // attachments are being saved
-            dialog.confirm_overwrite.connect(on_confirm_overwrite);
-        }
-        dialog.set_create_folders(true);
-        dialog.set_local_only(false);
-        
+
         bool accepted = (dialog.run() == Gtk.ResponseType.ACCEPT);
         string? filename = dialog.get_filename();
         
@@ -2097,105 +2048,126 @@ public class GearyController : Geary.BaseObject {
         if (!accepted || Geary.String.is_empty(filename))
             return;
         
-        File destination = File.new_for_path(filename);
-        
-        // Proceeding, save this as last destination directory
-        last_save_directory = (attachments.size == 1) ? destination.get_parent() : destination;
-        
-        debug("Saving attachments to %s", destination.get_path());
-        
-        // Save each one, checking for overwrite only if multiple attachments are being written
+        File dest_dir = File.new_for_path(filename);
+        this.application.config.attachments_dir = dest_dir.get_path();
+
+        debug("Saving attachments to %s", dest_dir.get_path());
+
         foreach (Geary.Attachment attachment in attachments) {
             File source_file = attachment.file;
-            File dest_file = (attachments.size == 1) ? destination : destination.get_child(attachment.file.get_basename());
-            
-            if (attachments.size > 1 && dest_file.query_exists() && !do_overwrite_confirmation(dest_file))
+            File dest_file = dest_dir.get_child(yield attachment.get_safe_file_name());
+            if (dest_file.query_exists() && !do_overwrite_confirmation(dest_file))
                 return;
-            
-            debug("Copying %s to %s...", source_file.get_path(), dest_file.get_path());
-            
-            source_file.copy_async.begin(dest_file, FileCopyFlags.OVERWRITE, Priority.DEFAULT, null,
-                null, on_save_completed);
+
+            try {
+                yield write_buffer_to_file(
+                    new Geary.Memory.FileBuffer(source_file, true), dest_file
+                );
+            } catch (Error error) {
+                message(
+                    "Failed to copy attachment %s to destination: %s",
+                    source_file.get_path(), error.message
+                );
+            }
         }
     }
-    
-    private void on_save_completed(Object? source, AsyncResult result) {
-        try {
-            ((File) source).copy_async.end(result);
-        } catch (Error error) {
-            message("Failed to copy attachment %s to destination: %s", ((File) source).get_path(),
-                error.message);
-        }
-    }
-    
-    private void on_save_buffer_to_file(string? filename, Geary.Memory.Buffer buffer) {
+
+    private async void prompt_save_buffer(string? filename, Geary.Memory.Buffer buffer)
+    throws Error {
 #if GTK_3_20
-        Gtk.FileChooserNative dialog = new Gtk.FileChooserNative(null, main_window, Gtk.FileChooserAction.SAVE,
-            Stock._SAVE, Stock._CANCEL);
+        Gtk.FileChooserNative dialog = new_save_chooser(Gtk.FileChooserAction.SAVE);
 #else
-        Gtk.FileChooserDialog dialog = new Gtk.FileChooserDialog(null, main_window, Gtk.FileChooserAction.SAVE,
-            Stock._CANCEL, Gtk.ResponseType.CANCEL, Stock._SAVE, Gtk.ResponseType.ACCEPT, null);
+        Gtk.FileChooserDialog dialog = new_save_chooser(Gtk.FileChooserAction.SAVE);
 #endif
-        if (last_save_directory != null)
-            dialog.set_current_folder(last_save_directory.get_path());
         if (!Geary.String.is_empty(filename))
             dialog.set_current_name(filename);
         dialog.set_do_overwrite_confirmation(true);
-        dialog.confirm_overwrite.connect(on_confirm_overwrite);
-        dialog.set_create_folders(true);
-        dialog.set_local_only(false);
-        
+        dialog.confirm_overwrite.connect((chooser) => {
+            return do_overwrite_confirmation(chooser.get_file())
+                ? Gtk.FileChooserConfirmation.ACCEPT_FILENAME
+                : Gtk.FileChooserConfirmation.SELECT_AGAIN;
+            });
         bool accepted = (dialog.run() == Gtk.ResponseType.ACCEPT);
         string? accepted_filename = dialog.get_filename();
-        
+
         dialog.destroy();
-        
-        if (!accepted || Geary.String.is_empty(accepted_filename))
-            return;
-        
-        File destination = File.new_for_path(accepted_filename);
-        
-        // Proceeding, save this as last destination directory
-        last_save_directory = destination.get_parent();
-        
-        debug("Saving buffer to %s", destination.get_path());
-        
-        // Create the file where the image will be saved and get the output stream.
-        try {
-            FileOutputStream outs = destination.replace(null, false, FileCreateFlags.REPLACE_DESTINATION,
-                null);
-            outs.splice_async.begin(buffer.get_input_stream(),
-                OutputStreamSpliceFlags.CLOSE_SOURCE | OutputStreamSpliceFlags.CLOSE_TARGET,
-                Priority.DEFAULT, null, on_save_buffer_to_file_completed);
-        } catch (Error err) {
-            message("Unable to save buffer to \"%s\": %s", filename, err.message);
+
+        if (accepted && !Geary.String.is_empty(accepted_filename)) {
+            File destination = File.new_for_path(accepted_filename);
+            this.application.config.attachments_dir = destination.get_parent().get_path();
+            yield write_buffer_to_file(buffer, destination);
         }
     }
-    
-    private void on_save_buffer_to_file_completed(Object? source, AsyncResult result) {
-        try {
-            ((FileOutputStream) source).splice_async.end(result);
-        } catch (Error err) {
-            message("Failed to save buffer to file: %s", err.message);
-        }
+
+    private async void write_buffer_to_file(Geary.Memory.Buffer buffer, File dest)
+    throws Error {
+        debug("Saving buffer to: %s", dest.get_path());
+        FileOutputStream outs = dest.replace(
+            null, false, FileCreateFlags.REPLACE_DESTINATION, null
+        );
+        yield outs.splice_async(
+            buffer.get_input_stream(),
+            OutputStreamSpliceFlags.CLOSE_SOURCE | OutputStreamSpliceFlags.CLOSE_TARGET,
+            Priority.DEFAULT, null
+        );
     }
-    
+
+    private bool do_overwrite_confirmation(File to_overwrite) {
+        string primary = _("A file named “%s” already exists.  Do you want to replace it?").printf(
+            to_overwrite.get_basename());
+        string secondary = _("The file already exists in “%s”.  Replacing it will overwrite its contents.").printf(
+            to_overwrite.get_parent().get_basename());
+
+        ConfirmationDialog dialog = new ConfirmationDialog(main_window, primary, secondary, _("_Replace"), "destructive-action");
+
+        return (dialog.run() == Gtk.ResponseType.OK);
+    }
+
+#if GTK_3_20
+    private inline Gtk.FileChooserNative new_save_chooser(Gtk.FileChooserAction action) {
+        Gtk.FileChooserNative dialog = new Gtk.FileChooserNative(
+            null,
+            this.main_window,
+            action,
+            Stock._SAVE,
+            Stock._CANCEL
+        );
+#else
+    private inline Gtk.FileChooserDialog new_save_chooser(Gtk.FileChooserAction action) {
+        Gtk.FileChooserDialog dialog = new Gtk.FileChooserDialog(
+            null,
+            this.main_window,
+            action,
+            Stock._CANCEL, Gtk.ResponseType.CANCEL,
+            Stock._SAVE, Gtk.ResponseType.ACCEPT,
+            null
+        );
+#endif
+        string? dir = this.application.config.attachments_dir;
+        if (!Geary.String.is_empty(dir))
+            dialog.set_current_folder(dir);
+        dialog.set_create_folders(true);
+        dialog.set_local_only(false);
+        return dialog;
+    }
+
     // Opens a link in an external browser.
     private bool open_uri(string _link) {
         string link = _link;
-        
+
         // Support web URLs that ommit the protocol.
         if (!link.contains(":"))
             link = "http://" + link;
-        
-        bool ret = false;
+
+        bool success = true;
         try {
-            ret = Gtk.show_uri(main_window.get_screen(), link, Gdk.CURRENT_TIME);
+            this.application.show_uri(link);
         } catch (Error err) {
-            debug("Unable to open URL. %s", err.message);
+            success = false;
+            debug("Unable to open URL: \"%s\" %s", link, err.message);
         }
-        
-        return ret;
+
+        return success;
     }
 
     internal bool close_composition_windows(bool main_window_only = false) {
@@ -2306,7 +2278,6 @@ public class GearyController : Geary.BaseObject {
         }
         widget.destroy.connect(on_composer_widget_destroy);
         widget.link_activated.connect((uri) => { open_uri(uri); });
-        widget.show_all();
 
         // We want to keep track of the open composer windows, so we can allow the user to cancel
         // an exit without losing their data.
@@ -2466,17 +2437,17 @@ public class GearyController : Geary.BaseObject {
         this.main_window.conversation_viewer.conversation_find_bar.set_search_mode(true);
     }
 
-    private void on_archive_message() {
+    private void on_archive_conversation() {
         archive_or_delete_selection_async.begin(true, false, cancellable_folder,
             on_archive_or_delete_selection_finished);
     }
     
-    private void on_trash_message() {
+    private void on_trash_conversation() {
         archive_or_delete_selection_async.begin(false, true, cancellable_folder,
             on_archive_or_delete_selection_finished);
     }
     
-    private void on_delete_message() {
+    private void on_delete_conversation() {
         archive_or_delete_selection_async.begin(false, false, cancellable_folder,
             on_archive_or_delete_selection_finished);
     }
@@ -2762,22 +2733,22 @@ public class GearyController : Geary.BaseObject {
                     draft_view.email, null, null, true
                 );
             });
-        view.message_view_iterator().foreach((mview) => {
-                mview.link_activated.connect((link) => {
-                        if (link.down().has_prefix(
-                                Geary.ComposedEmail.MAILTO_SCHEME)) {
-                            compose_mailto(link);
-                        } else {
-                            open_uri(link);
-                        }
-                    });
-                mview.save_image.connect(on_save_buffer_to_file);
-                mview.search_activated.connect((op, value) => {
-                        string search = op + ":" + value;
-                        show_search_bar(search);
-                    });
-                return true;
-            });
+        foreach (ConversationMessage msg_view in view) {
+            msg_view.link_activated.connect((link) => {
+                    if (link.down().has_prefix(Geary.ComposedEmail.MAILTO_SCHEME)) {
+                        compose_mailto(link);
+                    } else {
+                        open_uri(link);
+                    }
+                });
+            msg_view.save_image.connect((url, alt_text, buf) => {
+                    on_save_image_extended(view, url, alt_text, buf);
+                });
+            msg_view.search_activated.connect((op, value) => {
+                    string search = op + ":" + value;
+                    show_search_bar(search);
+                });
+        }
         view.save_attachments.connect(on_save_attachments);
         view.view_source.connect(on_view_source);
     }
@@ -2797,7 +2768,7 @@ public class GearyController : Geary.BaseObject {
             FileUtils.chmod(temporary_filename, (int) (Posix.S_IRUSR | Posix.S_IWUSR));
 
             string temporary_uri = Filename.to_uri(temporary_filename, null);
-            Gtk.show_uri(main_window.get_screen(), temporary_uri, Gdk.CURRENT_TIME);
+            this.application.show_uri(temporary_uri);
         } catch (Error error) {
             ErrorDialog dialog = new ErrorDialog(
                 main_window,
@@ -2820,11 +2791,11 @@ public class GearyController : Geary.BaseObject {
         // Mutliple message buttons.
         this.application.actions.get_action(ACTION_MOVE_MENU).sensitive =
             (current_folder is Geary.FolderSupport.Move);
-        this.application.actions.get_action(ACTION_ARCHIVE_MESSAGE).sensitive =
+        this.application.actions.get_action(ACTION_ARCHIVE_CONVERSATION).sensitive =
             (current_folder is Geary.FolderSupport.Archive);
-        this.application.actions.get_action(ACTION_TRASH_MESSAGE).sensitive =
+        this.application.actions.get_action(ACTION_TRASH_CONVERSATION).sensitive =
             current_folder_supports_trash();
-        this.application.actions.get_action(ACTION_DELETE_MESSAGE).sensitive =
+        this.application.actions.get_action(ACTION_DELETE_CONVERSATION).sensitive =
             (current_folder is Geary.FolderSupport.Remove);
 
         cancel_context_dependent_buttons();
@@ -2845,11 +2816,11 @@ public class GearyController : Geary.BaseObject {
         this.application.actions.get_action(ACTION_FORWARD_MESSAGE).sensitive = respond_sensitive;
         this.application.actions.get_action(ACTION_MOVE_MENU).sensitive =
             sensitive && (current_folder is Geary.FolderSupport.Move);
-        this.application.actions.get_action(ACTION_ARCHIVE_MESSAGE).sensitive = sensitive
+        this.application.actions.get_action(ACTION_ARCHIVE_CONVERSATION).sensitive = sensitive
             && (current_folder is Geary.FolderSupport.Archive);
-        this.application.actions.get_action(ACTION_TRASH_MESSAGE).sensitive = sensitive
+        this.application.actions.get_action(ACTION_TRASH_CONVERSATION).sensitive = sensitive
             && current_folder_supports_trash();
-        this.application.actions.get_action(ACTION_DELETE_MESSAGE).sensitive = sensitive
+        this.application.actions.get_action(ACTION_DELETE_CONVERSATION).sensitive = sensitive
             && (current_folder is Geary.FolderSupport.Remove);
 
         cancel_context_dependent_buttons();
@@ -2896,12 +2867,12 @@ public class GearyController : Geary.BaseObject {
         this.application.actions.get_action(ACTION_MOVE_MENU).tooltip = single ?
             MOVE_MESSAGE_TOOLTIP_SINGLE : MOVE_MESSAGE_TOOLTIP_MULTIPLE;
 
-        this.application.actions.get_action(ACTION_ARCHIVE_MESSAGE).tooltip = single ?
-            ARCHIVE_MESSAGE_TOOLTIP_SINGLE : ARCHIVE_MESSAGE_TOOLTIP_MULTIPLE;
-        this.application.actions.get_action(ACTION_TRASH_MESSAGE).tooltip = single ?
-            TRASH_MESSAGE_TOOLTIP_SINGLE : TRASH_MESSAGE_TOOLTIP_MULTIPLE;
-        this.application.actions.get_action(ACTION_DELETE_MESSAGE).tooltip = single ?
-            DELETE_MESSAGE_TOOLTIP_SINGLE : DELETE_MESSAGE_TOOLTIP_MULTIPLE;
+        this.application.actions.get_action(ACTION_ARCHIVE_CONVERSATION).tooltip = single ?
+            ARCHIVE_CONVERSATION_TOOLTIP_SINGLE : ARCHIVE_CONVERSATION_TOOLTIP_MULTIPLE;
+        this.application.actions.get_action(ACTION_TRASH_CONVERSATION).tooltip = single ?
+            TRASH_CONVERSATION_TOOLTIP_SINGLE : TRASH_CONVERSATION_TOOLTIP_MULTIPLE;
+        this.application.actions.get_action(ACTION_DELETE_CONVERSATION).tooltip = single ?
+            DELETE_CONVERSATION_TOOLTIP_SINGLE : DELETE_CONVERSATION_TOOLTIP_MULTIPLE;
     }
 
     // Returns a list of composer windows for an account, or null if none.
@@ -2988,5 +2959,50 @@ public class GearyController : Geary.BaseObject {
         }
     }
 
+    private void on_save_attachments(Gee.Collection<Geary.Attachment> attachments) {
+        if (attachments.size == 1) {
+            this.save_attachment_to_file.begin(attachments.to_array()[0], null);
+        } else {
+            this.save_attachments_to_file.begin(attachments);
+        }
+    }
+
+    private void on_save_image_extended(ConversationEmail view,
+                                        string url,
+                                        string? alt_text,
+                                        Geary.Memory.Buffer resource_buf) {
+        // This is going to be either an inline image, or a remote
+        // image, so either treat it as an attachment ot assume we'll
+        // have a valid filename in the URL
+
+        bool handled = false;
+        if (url.has_prefix(ClientWebView.CID_URL_PREFIX)) {
+            string cid = url.substring(ClientWebView.CID_URL_PREFIX.length);
+            Geary.Attachment? attachment = null;
+            try {
+                attachment = view.email.get_attachment_by_content_id(cid);
+            } catch (Error err) {
+                debug("Could not get attachment \"%s\": %s", cid, err.message);
+            }
+            if (attachment != null) {
+                this.save_attachment_to_file.begin(attachment, alt_text);
+                handled = true;
+            }
+        }
+
+        if (!handled) {
+            File source = File.new_for_uri(url);
+            string filename = source.get_basename();
+            this.prompt_save_buffer.begin(
+                filename, resource_buf,
+                (obj, res) => {
+                    try {
+                        this.prompt_save_buffer.end(res);
+                    } catch (Error err) {
+                        message("Unable to save buffer to \"%s\": %s", filename, err.message);
+                    }
+                });
+        }
+    }
 }
 

@@ -13,7 +13,7 @@ public class Geary.RFC822.Message : BaseObject {
      * referred to by rich text in alternative or related documents must be located by the caller
      * and appropriately presented.
      */
-    public delegate string? InlinePartReplacer(string filename, Mime.ContentType? content_type,
+    public delegate string? InlinePartReplacer(string? filename, Mime.ContentType? content_type,
         Mime.ContentDisposition? disposition, string? content_id, Geary.Memory.Buffer buffer);
 
     private const string HEADER_SENDER = "Sender";
@@ -198,7 +198,7 @@ public class Geary.RFC822.Message : BaseObject {
                     }
                     // Don't need to assign a CID to this file, so
                     // don't process it below any further.
-                    inline_files.remove(cid);
+                    inline_files.unset(cid);
                 }
             }
 

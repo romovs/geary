@@ -307,7 +307,11 @@ public class ConversationListStore : Gtk.ListStore {
         if (last_email == null) {
             debug("Cannot refresh conversation: last email is null");
             
+#if VALA_0_36
+            remove(ref iter);
+#else
             remove(iter);
+#endif
             return;
         }
         
@@ -379,9 +383,13 @@ public class ConversationListStore : Gtk.ListStore {
     private void remove_conversation(Geary.App.Conversation conversation) {
         Gtk.TreeIter iter;
         if (get_iter_for_conversation(conversation, out iter))
+#if VALA_0_36
+            remove(ref iter);
+#else
             remove(iter);
+#endif
         
-        row_map.remove(conversation);
+        row_map.unset(conversation);
     }
     
     private bool add_conversation(Geary.App.Conversation conversation) {

@@ -160,7 +160,7 @@ public class ConversationListBox : Gtk.ListBox {
     private class EmailRow : ConversationRow {
 
 
-        private const string MATCH_CLASS = "geary-match";
+        private const string MATCH_CLASS = "geary-matched";
 
 
         // Has the row been temporarily expanded to show search matches?
@@ -189,12 +189,11 @@ public class ConversationListBox : Gtk.ListBox {
 
         public override void expand() {
             this.is_expanded = true;
-            this.view.message_view_iterator().foreach((view) => {
-                    if (!view.web_view.has_valid_height) {
-                        view.web_view.queue_resize();
-                    }
-                    return true;
-                });
+            foreach (ConversationMessage message in this.view) {
+                if (!message.web_view.has_valid_height) {
+                    message.web_view.queue_resize();
+                }
+            };
             update_row_expansion();
         }
 
@@ -248,6 +247,49 @@ public class ConversationListBox : Gtk.ListBox {
 
     }
 
+    static construct {
+        // Set up custom keybindings
+        unowned Gtk.BindingSet bindings = Gtk.BindingSet.by_class(
+            (ObjectClass) typeof(ConversationListBox).class_ref()
+        );
+        Gtk.BindingEntry.add_signal(
+            bindings, Gdk.Key.space, 0, "focus-next", 0
+        );
+        Gtk.BindingEntry.add_signal(
+            bindings, Gdk.Key.KP_Space, 0, "focus-next", 0
+        );
+        Gtk.BindingEntry.add_signal(
+            bindings, Gdk.Key.space, Gdk.ModifierType.SHIFT_MASK, "focus-prev", 0
+        );
+        Gtk.BindingEntry.add_signal(
+            bindings, Gdk.Key.KP_Space, Gdk.ModifierType.SHIFT_MASK, "focus-prev", 0
+        );
+
+        Gtk.BindingEntry.add_signal(
+            bindings, Gdk.Key.Up, 0, "scroll", 1,
+            typeof(Gtk.ScrollType), Gtk.ScrollType.STEP_UP
+        );
+        Gtk.BindingEntry.add_signal(
+            bindings, Gdk.Key.Down, 0, "scroll", 1,
+            typeof(Gtk.ScrollType), Gtk.ScrollType.STEP_DOWN
+        );
+        Gtk.BindingEntry.add_signal(
+            bindings, Gdk.Key.Page_Up, 0, "scroll", 1,
+            typeof(Gtk.ScrollType), Gtk.ScrollType.PAGE_UP
+        );
+        Gtk.BindingEntry.add_signal(
+            bindings, Gdk.Key.Page_Down, 0, "scroll", 1,
+            typeof(Gtk.ScrollType), Gtk.ScrollType.PAGE_DOWN
+        );
+        Gtk.BindingEntry.add_signal(
+            bindings, Gdk.Key.Home, 0, "scroll", 1,
+            typeof(Gtk.ScrollType), Gtk.ScrollType.START
+        );
+        Gtk.BindingEntry.add_signal(
+            bindings, Gdk.Key.End, 0, "scroll", 1,
+            typeof(Gtk.ScrollType), Gtk.ScrollType.END
+        );
+    }
 
     private static int on_sort(Gtk.ListBoxRow row1, Gtk.ListBoxRow row2) {
         Geary.Email? email1 = ((ConversationRow) row1).email;
@@ -302,10 +344,53 @@ public class ConversationListBox : Gtk.ListBox {
     private ConversationRow? last_row = null;
 
     // Cached search terms to apply to new messages
-    private Gee.Set<string>? ordered_search_terms = null;
+    private Gee.Set<string>? search_terms = null;
+
+    // Total number of search matches found
+    private uint search_matches_found = 0;
 
     private uint loading_timeout_id = 0;
 
+
+    /** Keyboard action to scroll the conversation. */
+    [Signal (action=true)]
+    public virtual signal void scroll(Gtk.ScrollType type) {
+        Gtk.Adjustment adj = get_adjustment();
+        double value = adj.get_value();
+        switch (type) {
+        case Gtk.ScrollType.STEP_UP:
+            value -= adj.get_step_increment();
+            break;
+        case Gtk.ScrollType.STEP_DOWN:
+            value += adj.get_step_increment();
+            break;
+        case Gtk.ScrollType.PAGE_UP:
+            value -= adj.get_page_increment();
+            break;
+        case Gtk.ScrollType.PAGE_DOWN:
+            value += adj.get_page_increment();
+            break;
+        case Gtk.ScrollType.START:
+            value = 0.0;
+            break;
+        case Gtk.ScrollType.END:
+            value = adj.get_upper();
+            break;
+        }
+        adj.set_value(value);
+    }
+
+    /** Keyboard action to shift focus to the next message, if any. */
+    [Signal (action=true)]
+    public virtual signal void focus_next() {
+        this.move_cursor(Gtk.MovementStep.DISPLAY_LINES, 1);
+    }
+
+    /** Keyboard action to shift focus to the prev message, if any. */
+    [Signal (action=true)]
+    public virtual signal void focus_prev() {
+        this.move_cursor(Gtk.MovementStep.DISPLAY_LINES, -1);
+    }
 
     /** Fired when an email view is added to the conversation list. */
     public signal void email_added(ConversationEmail email);
@@ -318,7 +403,7 @@ public class ConversationListBox : Gtk.ListBox {
         Geary.EmailFlags? flags_to_add, Geary.EmailFlags? flags_to_remove);
 
     /** Fired when an email that matches the current search terms is found. */
-    public signal void search_matches_found();
+    public signal void search_matches_updated(uint matches);
 
 
     /**
@@ -351,7 +436,6 @@ public class ConversationListBox : Gtk.ListBox {
         set_selection_mode(Gtk.SelectionMode.NONE);
         set_sort_func(ConversationListBox.on_sort);
 
-        this.key_press_event.connect(on_key_press);
         this.realize.connect(() => {
                 adjustment.value_changed.connect(() => { check_mark_read(); });
             });
@@ -401,7 +485,7 @@ public class ConversationListBox : Gtk.ListBox {
             if (this.cancellable.is_cancelled()) {
                 break;
             }
-            if (!this.email_rows.contains(full_email.id)) {
+            if (!(full_email.id in this.email_rows)) {
                 EmailRow row = add_email(full_email);
                 if (row.is_expanded &&
                     (first_expanded_row == null ||
@@ -518,60 +602,6 @@ public class ConversationListBox : Gtk.ListBox {
     }
 
     /**
-     * Finds any currently visible messages, marks them as being read.
-     */
-    public void check_mark_read() {
-        Gee.ArrayList<Geary.EmailIdentifier> email_ids =
-            new Gee.ArrayList<Geary.EmailIdentifier>();
-
-        Gtk.Adjustment adj = get_adjustment();
-        int top_bound = (int) adj.value;
-        int bottom_bound = top_bound + (int) adj.page_size;
-
-        email_view_iterator().foreach((email_view) => {
-            const int TEXT_PADDING = 50;
-            ConversationMessage conversation_message = email_view.primary_message;
-            // Don't bother with not-yet-loaded emails since the
-            // size of the body will be off, affecting the visibility
-            // of emails further down the conversation.
-            if (email_view.email.is_unread().is_certain() &&
-                conversation_message.web_view.has_valid_height &&
-                !email_view.is_manually_read) {
-                 int body_top = 0;
-                 int body_left = 0;
-                 ConversationWebView web_view = conversation_message.web_view;
-                 web_view.translate_coordinates(
-                     this,
-                     0, 0,
-                     out body_left, out body_top
-                 );
-
-                 int body_height = web_view.get_allocated_height();
-                 int body_bottom = body_top + body_height;
-
-                 // Only mark the email as read if it's actually visible
-                 if (body_height > 0 &&
-                     body_bottom > top_bound &&
-                     body_top + TEXT_PADDING < bottom_bound) {
-                     email_ids.add(email_view.email.id);
-
-                     // Since it can take some time for the new flags
-                     // to round-trip back to our signal handlers,
-                     // mark as manually read here
-                     email_view.is_manually_read = true;
-                 }
-             }
-            return true;
-        });
-
-        if (email_ids.size > 0) {
-            Geary.EmailFlags flags = new Geary.EmailFlags();
-            flags.add(Geary.EmailFlags.UNREAD);
-            mark_emails(email_ids, null, flags);
-        }
-    }
-
-    /**
      * Displays an email as being read, regardless of its actual flags.
      */
     public void mark_manual_read(Geary.EmailIdentifier id) {
@@ -637,6 +667,7 @@ public class ConversationListBox : Gtk.ListBox {
                 if (!Geary.String.is_empty_or_whitespace(word))
                     search_matches.add(word);
             }
+
             if (!this.cancellable.is_cancelled()) {
                 highlight_search_terms(search_matches);
             }
@@ -648,36 +679,36 @@ public class ConversationListBox : Gtk.ListBox {
      *
      * Returns true if any were found, else returns false.
      */
-    public void highlight_search_terms(Gee.Set<string> search_matches) {
-        // Webkit's highlighting is ... weird.  In order to actually
-        // see all the highlighting you're applying, it seems
-        // necessary to start with the shortest string and work up.
-        // If you don't, it seems that shorter strings will overwrite
-        // longer ones, and you're left with incomplete highlighting.
-        Gee.TreeSet<string> ordered_matches =
-            new Gee.TreeSet<string>((a, b) => a.length - b.length);
-        ordered_matches.add_all(search_matches);
-        this.ordered_search_terms = ordered_matches;
-        this.foreach((child) => {
-                apply_search_terms((EmailRow) child);
-            });
+    public void highlight_search_terms(Gee.Set<string> terms) {
+        this.search_terms = terms;
+        this.search_matches_found = 0;
+        foreach (Gtk.Widget child in get_children()) {
+            EmailRow? row = child as EmailRow;
+            if (row != null) {
+                apply_search_terms(row);
+            }
+        }
     }
 
     /**
      * Removes search term highlighting from all messages.
      */
     public void unmark_search_terms() {
-        this.ordered_search_terms = null;
+        this.search_terms = null;
+        this.search_matches_found = 0;
+
         this.foreach((child) => {
-                EmailRow row = (EmailRow) child;
-                if (row.is_search_match) {
-                    row.is_search_match = false;
-                    row.view.message_view_iterator().foreach((msg_view) => {
+                EmailRow? row = child as EmailRow;
+                if (row != null) {
+                    if (row.is_search_match) {
+                        row.is_search_match = false;
+                        foreach (ConversationMessage msg_view in row.view) {
                             msg_view.unmark_search_terms();
-                            return true;
-                        });
+                        }
+                    }
                 }
             });
+        search_matches_updated(this.search_matches_found);
     }
 
     /**
@@ -785,14 +816,6 @@ public class ConversationListBox : Gtk.ListBox {
                 return true;
             });
 
-        // Capture key events on the email's web views to allow
-        // scrolling on Space, etc. need to do this after loading so
-        // attached messages are present
-        view.message_view_iterator().foreach((msg_view) => {
-                msg_view.web_view.key_press_event.connect(on_key_press);
-                return true;
-            });
-
         EmailRow row = new EmailRow(view);
         this.email_rows.set(email.id, row);
 
@@ -807,7 +830,7 @@ public class ConversationListBox : Gtk.ListBox {
         }
 
         // Apply any existing search terms to the new row
-        if (this.ordered_search_terms != null) {
+        if (this.search_terms != null) {
             apply_search_terms(row);
         }
 
@@ -848,6 +871,60 @@ public class ConversationListBox : Gtk.ListBox {
         get_adjustment().set_value(y);
     }
 
+    /**
+     * Finds any currently visible messages, marks them as being read.
+     */
+    private void check_mark_read() {
+        Gee.ArrayList<Geary.EmailIdentifier> email_ids =
+            new Gee.ArrayList<Geary.EmailIdentifier>();
+
+        Gtk.Adjustment adj = get_adjustment();
+        int top_bound = (int) adj.value;
+        int bottom_bound = top_bound + (int) adj.page_size;
+
+        email_view_iterator().foreach((email_view) => {
+            const int TEXT_PADDING = 50;
+            ConversationMessage conversation_message = email_view.primary_message;
+            // Don't bother with not-yet-loaded emails since the
+            // size of the body will be off, affecting the visibility
+            // of emails further down the conversation.
+            if (email_view.email.is_unread().is_certain() &&
+                conversation_message.web_view.has_valid_height &&
+                !email_view.is_manually_read) {
+                 int body_top = 0;
+                 int body_left = 0;
+                 ConversationWebView web_view = conversation_message.web_view;
+                 web_view.translate_coordinates(
+                     this,
+                     0, 0,
+                     out body_left, out body_top
+                 );
+
+                 int body_height = web_view.get_allocated_height();
+                 int body_bottom = body_top + body_height;
+
+                 // Only mark the email as read if it's actually visible
+                 if (body_height > 0 &&
+                     body_bottom > top_bound &&
+                     body_top + TEXT_PADDING < bottom_bound) {
+                     email_ids.add(email_view.email.id);
+
+                     // Since it can take some time for the new flags
+                     // to round-trip back to our signal handlers,
+                     // mark as manually read here
+                     email_view.is_manually_read = true;
+                 }
+             }
+            return true;
+        });
+
+        if (email_ids.size > 0) {
+            Geary.EmailFlags flags = new Geary.EmailFlags();
+            flags.add(Geary.EmailFlags.UNREAD);
+            mark_emails(email_ids, null, flags);
+        }
+    }
+
     // Due to Bug 764710, we can only use the CSS :last-child selector
     // for GTK themes after 3.20.3, so for now manually maintain a
     // class on the last box so we can emulate it
@@ -881,28 +958,29 @@ public class ConversationListBox : Gtk.ListBox {
     }
 
     private void apply_search_terms(EmailRow row) {
+        // Message bodies need to be loaded to be able to search for
+        // them?
         if (row.view.message_bodies_loaded) {
-            apply_search_terms_impl(row);
+            this.apply_search_terms_impl.begin(row);
         } else {
             row.view.notify["message-bodies-loaded"].connect(() => {
-                    apply_search_terms_impl(row);
+                    this.apply_search_terms_impl.begin(row);
                 });
         }
     }
 
-    private inline void apply_search_terms_impl(EmailRow row) {
+    // This should only be called from apply_search_terms above
+    private async void apply_search_terms_impl(EmailRow row) {
         bool found = false;
-        row.view.message_view_iterator().foreach((view) => {
-                if (view.highlight_search_terms(this.ordered_search_terms) > 0) {
-                    found = true;
-                    return false;
-                }
-                return true;
-            });
-        row.is_search_match = found;
-        if (found) {
-            search_matches_found();
+        foreach (ConversationMessage view in row.view) {
+            uint count = yield view.highlight_search_terms(this.search_terms);
+            if (count > 0) {
+                found = true;
+            }
+            this.search_matches_found += count;
         }
+        row.is_search_match = found;
+        search_matches_updated(this.search_matches_found);
     }
 
     /**
@@ -920,7 +998,7 @@ public class ConversationListBox : Gtk.ListBox {
     private Gee.Iterator<ConversationMessage> message_view_iterator() {
         return Gee.Iterator.concat<ConversationMessage>(
             email_view_iterator().map<Gee.Iterator<ConversationMessage>>(
-                (email_view) => { return email_view.message_view_iterator(); }
+                (email_view) => { return email_view.iterator(); }
             )
         );
     }
@@ -997,21 +1075,6 @@ public class ConversationListBox : Gtk.ListBox {
             flags.add(flag);
         }
         return flags;
-    }
-
-    private bool on_key_press(Gtk.Widget widget, Gdk.EventKey event) {
-        // Override some key bindings to get something that works more
-        // like a browser page.
-        if (event.keyval == Gdk.Key.space) {
-            Gtk.ScrollType dir = Gtk.ScrollType.PAGE_DOWN;
-            if ((event.state & Gdk.ModifierType.SHIFT_MASK) ==
-                Gdk.ModifierType.SHIFT_MASK) {
-                dir = Gtk.ScrollType.PAGE_UP;
-            }
-            this.move_cursor(Gtk.MovementStep.PAGES, 1);
-            return true;
-        }
-        return false;
     }
 
     private void on_row_activated(Gtk.ListBoxRow widget) {

@@ -19,6 +19,7 @@ public class ConversationMessage : Gtk.Grid {
 
 
     private const string FROM_CLASS = "geary-from";
+    private const string MATCH_CLASS = "geary-match";
     private const string REPLACED_CID_TEMPLATE = "replaced_%02u@geary";
     private const string REPLACED_IMAGE_CLASS = "geary_replaced_inline_image";
 
@@ -39,7 +40,6 @@ public class ConversationMessage : Gtk.Grid {
     private class AddressFlowBoxChild : Gtk.FlowBoxChild {
 
         private const string PRIMARY_CLASS = "geary-primary";
-        private const string MATCH_CLASS = "geary-match";
 
         public enum Type { FROM, OTHER; }
 
@@ -101,7 +101,7 @@ public class ConversationMessage : Gtk.Grid {
         }
 
         public bool highlight_search_term(string term) {
-            bool found = this.search_value.contains(term);
+            bool found = term in this.search_value;
             if (found) {
                 get_style_context().add_class(MATCH_CLASS);
             } else {
@@ -170,6 +170,7 @@ public class ConversationMessage : Gtk.Grid {
     private Gtk.FlowBox from;
     [GtkChild]
     private Gtk.Label subject;
+    private string subject_searchable = "";
     [GtkChild]
     private Gtk.Label date;
 
@@ -238,8 +239,11 @@ public class ConversationMessage : Gtk.Grid {
 
     private int remote_resources_loaded = 0;
 
-    // Timer for hiding the progress bar when complete
-    private Geary.TimeoutManager body_progress_timer = null;
+    // Timeouts for showing the progress bar and hiding it when
+    // complete. The former is so that when loading cached images it
+    // doesn't pop up and then go away immediately afterwards.
+    private Geary.TimeoutManager show_progress_timeout = null;
+    private Geary.TimeoutManager hide_progress_timeout = null;
 
 
     /** Fired when the user clicks a link in the email. */
@@ -252,7 +256,7 @@ public class ConversationMessage : Gtk.Grid {
     public signal void remember_remote_images();
 
     /** Fired when the user saves an inline displayed image. */
-    public signal void save_image(string? filename, Geary.Memory.Buffer buffer);
+    public signal void save_image(string? uri, string? alt_text, Geary.Memory.Buffer buffer);
 
     /** Fired when the user activates a specific search shortcut. */
     public signal void search_activated(string operator, string value);
@@ -293,7 +297,7 @@ public class ConversationMessage : Gtk.Grid {
             .activate.connect((param) => {
                 link_activated(param.get_string());
             });
-        add_action(ACTION_SAVE_IMAGE, true, VariantType.STRING)
+        add_action(ACTION_SAVE_IMAGE, true, new VariantType("(sms)"))
             .activate.connect(on_save_image);
         add_action(ACTION_SEARCH_FROM, true, VariantType.STRING)
             .activate.connect((param) => {
@@ -359,6 +363,7 @@ public class ConversationMessage : Gtk.Grid {
         if (this.message.subject != null) {
             this.subject.set_text(this.message.subject.value);
             this.subject.set_visible(true);
+            this.subject_searchable = this.message.subject.value.casefold();
         }
         fill_header_addresses(this.to_header, this.message.to);
         fill_header_addresses(this.cc_header, this.message.cc);
@@ -391,13 +396,17 @@ public class ConversationMessage : Gtk.Grid {
 
         this.body_container.set_has_tooltip(true); // Used to show link URLs
         this.body_container.add(this.web_view);
-        this.body_progress_timer = new Geary.TimeoutManager.seconds(
+        this.show_progress_timeout = new Geary.TimeoutManager.seconds(
+            1, () => { this.body_progress.show(); }
+        );
+        this.hide_progress_timeout = new Geary.TimeoutManager.seconds(
             1, () => { this.body_progress.hide(); }
         );
     }
 
     public override void destroy() {
-        this.body_progress_timer.reset();
+        this.show_progress_timeout.reset();
+        this.hide_progress_timeout.reset();
         this.resources.clear();
         this.searchable_addresses.clear();
         base.destroy();
@@ -437,9 +446,18 @@ public class ConversationMessage : Gtk.Grid {
             );
 
             try {
-                InputStream data =
-                    yield session.send_async(message, load_cancelled);
-                if (data != null && message.status_code == 200) {
+                // We want to just pass load_cancelled to send_async
+                // here, but per Bug 778720 this is causing some
+                // crashy race in libsoup's cache implementation, so
+                // for now just let the load go through and manually
+                // check to see if the load has been cancelled before
+                // setting the avatar
+                InputStream data = yield session.send_async(
+                    message,
+                    null // should be 'load_cancelled'
+                );
+                if (!load_cancelled.is_cancelled() &&
+                    data != null && message.status_code == 200) {
                     yield set_avatar(data, load_cancelled);
                 }
             } catch (Error err) {
@@ -467,10 +485,11 @@ public class ConversationMessage : Gtk.Grid {
 
     /**
      * Highlights user search terms in the message view.
-     &
-     * Returns the number of matching search terms.
+     *
+     * Highlighting includes both in the message headers, and the
+     * mesage body. returns the number of matching search terms.
      */
-    public uint highlight_search_terms(Gee.Set<string> search_matches) {
+    public async uint highlight_search_terms(Gee.Set<string> search_matches) {
         // Remove existing highlights
         this.web_view.get_find_controller().search_finish();
 
@@ -479,23 +498,21 @@ public class ConversationMessage : Gtk.Grid {
         foreach(string raw_match in search_matches) {
             string match = raw_match.casefold();
 
-            debug("Matching: %s", match);
+            if (this.subject_searchable.contains(match)) {
+                this.subject.get_style_context().add_class(MATCH_CLASS);
+                ++headers_found;
+            } else {
+                this.subject.get_style_context().remove_class(MATCH_CLASS);
+            }
 
             foreach (AddressFlowBoxChild address in this.searchable_addresses) {
                 if (address.highlight_search_term(match)) {
                     ++headers_found;
                 }
             }
-
-            // XXX WK2
-            //webkit_found += this.web_view.mark_text_matches(raw_match, false, 0);
-            this.web_view.get_find_controller().search(
-                raw_match,
-                WebKit.FindOptions.CASE_INSENSITIVE,
-                1024
-            );
         }
 
+        webkit_found += yield this.web_view.highlight_search_terms(search_matches);
         return headers_found + webkit_found;
     }
 
@@ -506,7 +523,7 @@ public class ConversationMessage : Gtk.Grid {
         foreach (AddressFlowBoxChild address in this.searchable_addresses) {
             address.unmark_search_terms();
         }
-        web_view.get_find_controller().search_finish();
+        this.web_view.unmark_search_terms();
     }
 
     private SimpleAction add_action(string name, bool enabled, VariantType? type = null) {
@@ -523,18 +540,14 @@ public class ConversationMessage : Gtk.Grid {
         }
     }
 
-    private Menu set_action_param_string(MenuModel existing, string value) {
+    private Menu set_action_param_value(MenuModel existing, Variant value) {
         Menu menu = new Menu();
         for (int i = 0; i < existing.get_n_items(); i++) {
             MenuItem item = new MenuItem.from_model(existing, i);
             Variant action = item.get_attribute_value(
                 Menu.ATTRIBUTE_ACTION, VariantType.STRING
             );
-            item.set_action_and_target(
-                action.get_string(),
-                VariantType.STRING.dup_string(),
-                value
-            );
+            item.set_action_and_target_value(action.get_string(), value);
             menu.append_item(item);
         }
         return menu;
@@ -645,7 +658,7 @@ public class ConversationMessage : Gtk.Grid {
                                   Cancellable load_cancelled)
     throws Error {
         Gdk.Pixbuf avatar_buf =
-            yield Gdk.Pixbuf.new_from_stream_async(data, load_cancelled);
+            yield new Gdk.Pixbuf.from_stream_async(data, load_cancelled);
 
         if (avatar_buf != null && !load_cancelled.is_cancelled()) {
             int window_scale = get_scale_factor();
@@ -668,7 +681,7 @@ public class ConversationMessage : Gtk.Grid {
     // If this returns null, the MIME part is dropped from the final returned document; otherwise,
     // this returns HTML that is placed into the document in the position where the MIME part was
     // found
-    private string? inline_image_replacer(string filename, Geary.Mime.ContentType? content_type,
+    private string? inline_image_replacer(string? filename, Geary.Mime.ContentType? content_type,
         Geary.Mime.ContentDisposition? disposition, string? content_id, Geary.Memory.Buffer buffer) {
         if (content_type == null) {
             debug("Not displaying inline: no Content-Type");
@@ -688,8 +701,16 @@ public class ConversationMessage : Gtk.Grid {
 
         this.web_view.add_internal_resource(id, buffer);
 
+        // Translators: This string is used as the HTML IMG ALT
+        // attribute value when displaying an inline image in an email
+        // that did not specify a file name. E.g. <IMG ALT="Image" ...
+        string UNKNOWN_FILENAME_ALT_TEXT = _("Image");
+        string clean_filename = Geary.HTML.escape_markup(
+            filename ?? UNKNOWN_FILENAME_ALT_TEXT
+        );
+
         return "<img alt=\"%s\" class=\"%s\" src=\"%s%s\" />".printf(
-            Geary.HTML.escape_markup(filename),
+            clean_filename,
             REPLACED_IMAGE_CLASS,
             ClientWebView.CID_URL_PREFIX,
             Geary.HTML.escape_markup(id)
@@ -717,10 +738,11 @@ public class ConversationMessage : Gtk.Grid {
 
     private void on_load_changed(WebKit.LoadEvent load_event) {
         if (load_event != WebKit.LoadEvent.FINISHED) {
-            this.body_progress_timer.reset();
+            this.hide_progress_timeout.reset();
             this.body_progress.pulse();
         } else {
-            this.body_progress_timer.start();
+            this.show_progress_timeout.reset();
+            this.hide_progress_timeout.start();
         }
     }
 
@@ -735,7 +757,7 @@ public class ConversationMessage : Gtk.Grid {
         // in on_load_changed.
         if (this.is_loading_images &&
             !res.get_uri().has_prefix(ClientWebView.INTERNAL_URL_PREFIX)) {
-            this.body_progress.show();
+            this.show_progress_timeout.start();
             this.body_progress.pulse();
             if (!this.web_view.is_loading) {
                 // The initial page load has finished, so we must be
@@ -753,7 +775,8 @@ public class ConversationMessage : Gtk.Grid {
                         );
                         if (this.remote_resources_loaded >=
                             this.remote_resources_requested) {
-                            this.body_progress_timer.start();
+                            this.show_progress_timeout.start();
+                            this.hide_progress_timeout.start();
                         }
                     });
             }
@@ -812,7 +835,10 @@ public class ConversationMessage : Gtk.Grid {
                 ? context_menu_email
                 : context_menu_link;
             model.append_section(
-                null, set_action_param_string(link_menu, link_url)
+                null,
+                set_action_param_value(
+                    link_menu, new Variant.string(link_url)
+                )
             );
         }
 
@@ -820,7 +846,14 @@ public class ConversationMessage : Gtk.Grid {
             string uri = hit_test.get_image_uri();
             set_action_enabled(ACTION_SAVE_IMAGE, uri in this.resources);
             model.append_section(
-                null, set_action_param_string(context_menu_image, uri)
+                null,
+                set_action_param_value(
+                    context_menu_image,
+                    new Variant.tuple({
+                            new Variant.string(uri),
+                            new Variant("ms", hit_test.get_link_label()),
+                        })
+                )
             );
         }
 
@@ -924,11 +957,19 @@ public class ConversationMessage : Gtk.Grid {
     }
 
     private void on_save_image(Variant? param) {
-        WebKit.WebResource response = this.resources.get(param.get_string());
+        string cid_url = param.get_child_value(0).get_string();
+
+        string? alt_text = null;
+        Variant? alt_maybe = param.get_child_value(1).get_maybe();
+        if (alt_maybe != null) {
+            alt_text = alt_maybe.get_string();
+        }
+        WebKit.WebResource response = this.resources.get(cid_url);
         response.get_data.begin(null, (obj, res) => {
                 try {
                     uint8[] data = response.get_data.end(res);
                     save_image(response.get_uri(),
+                               alt_text,
                                new Geary.Memory.ByteBuffer(data, data.length));
                 } catch (Error err) {
                     debug(

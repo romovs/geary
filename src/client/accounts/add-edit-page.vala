@@ -615,10 +615,14 @@ public class AddEditPage : Gtk.Box {
     }
     
     public bool is_complete() {
+        if (Geary.String.is_empty_or_whitespace(email_address) ||
+            !Geary.RFC822.MailboxAddress.is_valid_address(email_address)) {
+            return false;
+        }
+
         switch (get_service_provider()) {
             case Geary.ServiceProvider.OTHER:
                 if (Geary.String.is_empty_or_whitespace(nickname) ||
-                    Geary.String.is_empty_or_whitespace(email_address) ||
                     Geary.String.is_empty_or_whitespace(imap_host) ||
                     Geary.String.is_empty_or_whitespace(imap_port.to_string()) ||
                     Geary.String.is_empty_or_whitespace(imap_username) ||
@@ -635,7 +639,6 @@ public class AddEditPage : Gtk.Box {
             // GMAIL, YAHOO, and OUTLOOK
             default:
                 if (Geary.String.is_empty_or_whitespace(nickname) ||
-                    Geary.String.is_empty_or_whitespace(email_address) ||
                     Geary.String.is_empty_or_whitespace(password))
                     return false;
             break;
@@ -654,7 +657,21 @@ public class AddEditPage : Gtk.Box {
             (smtp_use_imap_credentials ? imap_password.strip() : smtp_password.strip()));
 
         Geary.AccountInformation? info = null;
-        if (this.id == null) {
+        if (this.id != null) {
+            // The id will be null in the case of adding a new
+            // account, but it won't be null and yet the account won't
+            // be accessible via Engine.get_account() in the case of
+            // an orphan account - i.e. when adding an account
+            // encountered validation errors. So we need to deal with
+            // both cases.
+            try {
+                info = Geary.Engine.instance.get_account(this.id);
+            } catch (Error err) {
+                // id was for an orphan account
+            }
+        }
+
+        if (info == null) {
             // New account
             try {
                 info = Geary.Engine.instance.create_orphan_account();
@@ -663,14 +680,9 @@ public class AddEditPage : Gtk.Box {
                       this.id, this.email_address, err.message);
             }
         } else {
-            // Existing account: create a copy so we don't mess up the original.
-            try {
-                info = new Geary.AccountInformation.temp_copy(
-                    Geary.Engine.instance.get_account(this.id)
-                );
-            } catch (Error err) {
-                debug("Unable get existing account %s: %s", this.id, err.message);
-            }
+            // Existing account: create a copy so we don't mess up the
+            // original.
+            info = new Geary.AccountInformation.temp_copy(info);
         }
 
         if (info != null) {
